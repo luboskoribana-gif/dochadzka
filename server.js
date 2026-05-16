@@ -9,17 +9,10 @@ const app     = express();
 const PORT    = process.env.PORT || 3000;
 const PUB_DIR = path.join(__dirname, 'public');
 
-// Railway Volume sa mountuje na /data; lokálne padneme späť na ./data
-function resolveDataDir() {
-  const railwayVolume = '/data';
-  try {
-    fs.accessSync(railwayVolume, fs.constants.W_OK);
-    return railwayVolume;
-  } catch {
-    return path.join(__dirname, 'data');
-  }
-}
-const DATA_DIR = process.env.DATA_DIR || resolveDataDir();
+// Na Railway (RAILWAY_ENVIRONMENT je nastavené automaticky) použij /app/data,
+// lokálne použij ./data vedľa server.js
+const DATA_DIR = process.env.DATA_DIR ||
+  (process.env.RAILWAY_ENVIRONMENT ? '/app/data' : path.join(__dirname, 'data'));
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
