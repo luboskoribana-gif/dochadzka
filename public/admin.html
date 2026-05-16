@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dochádzka – Admin</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ── Login ────────────────────────────────────────────────── -->
+<div id="login-wrap" class="center-wrap">
+  <div class="card" style="max-width:340px">
+    <p class="logo">📋 Dochádzka</p>
+    <p class="sub">Administrácia</p>
+    <div class="form-group">
+      <label for="pw-input">Heslo</label>
+      <input id="pw-input" type="password" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <button class="btn btn-primary btn-full" onclick="doLogin()">Prihlásiť sa</button>
+    <div id="login-err" class="msg msg-err hidden"></div>
+  </div>
+</div>
+
+<!-- ── Admin panel ───────────────────────────────────────────── -->
+<div id="admin-wrap" class="hidden">
+
+  <div class="admin-header">
+    <h1>📋 Dochádzka</h1>
+    <button class="btn btn-ghost no-print" onclick="doLogout()">Odhlásiť</button>
+  </div>
+
+  <div class="tabs no-print">
+    <button class="tab-btn active"  onclick="switchTab('employees', this)">👥 Zamestnanci</button>
+    <button class="tab-btn"         onclick="switchTab('records',   this)">📅 Dochádzka</button>
+    <button class="tab-btn"         onclick="switchTab('report',    this)">📊 Mesačný výkaz</button>
+    <button class="tab-btn"         onclick="switchTab('settings',  this)">⚙️ Nastavenia</button>
+    <button class="tab-btn"         onclick="switchTab('qrcodes',   this)">📱 QR kódy</button>
+  </div>
+
+  <div class="container">
+
+    <!-- ZAMESTNANCI -->
+    <div id="pane-employees" class="tab-pane active">
+      <div class="sec-head">
+        <h2>Zamestnanci</h2>
+      </div>
+      <div id="emp-grid" class="emp-grid"></div>
+      <div class="add-row">
+        <div class="form-group">
+          <label>Nový zamestnanec</label>
+          <input id="new-emp" type="text" placeholder="Meno a priezvisko"
+                 onkeydown="if(event.key==='Enter') addEmp()">
+        </div>
+        <button class="btn btn-success" onclick="addEmp()">Pridať</button>
+      </div>
+    </div>
+
+    <!-- DOCHÁDZKA -->
+    <div id="pane-records" class="tab-pane">
+      <div class="sec-head">
+        <h2>Záznamy dochádzky</h2>
+        <button class="btn btn-ghost no-print" onclick="loadRecords()">↺ Obnoviť</button>
+      </div>
+      <div class="filter-bar no-print">
+        <select id="f-emp">   <option value="">Všetci zamestnanci</option></select>
+        <select id="f-month"> <option value="">– Mesiac –</option></select>
+        <select id="f-year">  <option value="">– Rok –</option></select>
+        <button class="btn btn-primary" onclick="loadRecords()">Filtrovať</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Dátum</th><th>Čas</th><th>Zamestnanec</th><th>Akcia</th></tr>
+          </thead>
+          <tbody id="rec-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MESAČNÝ VÝKAZ -->
+    <div id="pane-report" class="tab-pane">
+      <div class="sec-head">
+        <h2>Mesačný výkaz</h2>
+        <div class="filter-bar no-print" style="margin:0">
+          <select id="r-month"></select>
+          <select id="r-year"></select>
+          <button class="btn btn-primary" onclick="loadReport()">Zobraziť</button>
+          <button class="btn btn-ghost"   onclick="window.print()">🖨 Tlač</button>
+        </div>
+      </div>
+      <div id="report-out"></div>
+    </div>
+
+    <!-- NASTAVENIA -->
+    <div id="pane-settings" class="tab-pane">
+      <div class="sec-head"><h2>Nastavenia</h2></div>
+      <div class="settings-box">
+        <div class="form-group">
+          <label>Denná sadzba diéty (€)</label>
+          <input id="s-diet" type="number" step="0.01" min="0">
+          <small>5–12 h = 50 %   |   12–18 h = 75 %   |   18+ h = 100 %</small>
+        </div>
+        <div class="form-group" style="margin-top:14px">
+          <label>Príspevok na stravu (€ / deň)</label>
+          <input id="s-meal" type="number" step="0.01" min="0">
+          <small>Platí za dni celého dňa na centrále (príchod + odchod, bez montáže)</small>
+        </div>
+        <button class="btn btn-primary" style="margin-top:8px" onclick="saveSettings()">
+          Uložiť
+        </button>
+        <div id="s-msg" class="msg hidden"></div>
+      </div>
+    </div>
+
+    <!-- QR KÓDY -->
+    <div id="pane-qrcodes" class="tab-pane">
+      <div class="sec-head no-print">
+        <h2>QR kódy</h2>
+        <button class="btn btn-ghost" onclick="window.print()">🖨 Tlač</button>
+      </div>
+      <div id="qr-hint" class="hint-box no-print"></div>
+      <div id="qr-grid" class="qr-grid">
+        <p style="color:var(--muted)">Načítavam…</p>
+      </div>
+    </div>
+
+  </div><!-- /container -->
+</div><!-- /admin-wrap -->
+
+<script src="/admin.js"></script>
+</body>
+</html>

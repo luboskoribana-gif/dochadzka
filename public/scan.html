@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dochádzka – Skenovanie</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .scan-card { max-width: 380px; }
+    #clock { text-align: center; font-size: 2rem; font-weight: 700; letter-spacing: 2px; color: var(--primary); margin-bottom: 4px; }
+    #date-str { text-align: center; font-size: .85rem; color: var(--muted); margin-bottom: 22px; }
+    .confirm-btn { margin-top: 8px; }
+  </style>
+</head>
+<body>
+<div class="center-wrap">
+  <div class="card scan-card">
+    <p class="logo">📋 Dochádzka</p>
+
+    <div id="clock">--:--</div>
+    <div id="date-str"></div>
+
+    <div id="action-pill" class="action-pill">—</div>
+
+    <div class="form-group">
+      <label for="emp-select">Zamestnanec</label>
+      <select id="emp-select">
+        <option value="">— Vyberte zamestnanca —</option>
+      </select>
+    </div>
+
+    <button id="confirm-btn" class="btn btn-primary btn-full confirm-btn" onclick="doConfirm()">
+      Potvrdiť
+    </button>
+
+    <div id="msg" class="msg hidden"></div>
+  </div>
+</div>
+<script src="/scan.js"></script>
+</body>
+</html>
