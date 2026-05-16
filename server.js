@@ -259,7 +259,7 @@ app.listen(PORT, '0.0.0.0', () => {
       if (net.family === 'IPv4' && !net.internal) { localIP = net.address; break; }
     }
   }
-  console.log(`\n✅  Dochádzka server beží`);
+  console.log(`\n✅  Dochádzka Enerigo server beží`);
   console.log(`   Admin:  http://localhost:${PORT}/admin`);
   console.log(`   Sieť:   http://${localIP}:${PORT}/admin`);
   console.log(`   Scan:   http://${localIP}:${PORT}/scan\n`);
