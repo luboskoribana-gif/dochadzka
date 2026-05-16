@@ -5,12 +5,23 @@ const path    = require('path');
 const crypto  = require('crypto');
 const QRCode  = require('qrcode');
 
-const app      = express();
-const PORT     = process.env.PORT || 3000;
-const DATA_DIR = path.join(__dirname, 'data');
-const PUB_DIR  = path.join(__dirname, 'public');
+const app     = express();
+const PORT    = process.env.PORT || 3000;
+const PUB_DIR = path.join(__dirname, 'public');
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+// Railway Volume sa mountuje na /data; lokálne padneme späť na ./data
+function resolveDataDir() {
+  const railwayVolume = '/data';
+  try {
+    fs.accessSync(railwayVolume, fs.constants.W_OK);
+    return railwayVolume;
+  } catch {
+    return path.join(__dirname, 'data');
+  }
+}
+const DATA_DIR = process.env.DATA_DIR || resolveDataDir();
+
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const FILES = {
   employees: path.join(DATA_DIR, 'employees.json'),
@@ -260,6 +271,7 @@ app.listen(PORT, '0.0.0.0', () => {
     }
   }
   console.log(`\n✅  Dochádzka Enerigo server beží`);
+  console.log(`   Dáta:   ${DATA_DIR}`);
   console.log(`   Admin:  http://localhost:${PORT}/admin`);
   console.log(`   Sieť:   http://${localIP}:${PORT}/admin`);
   console.log(`   Scan:   http://${localIP}:${PORT}/scan\n`);
