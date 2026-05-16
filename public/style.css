@@ -40,6 +40,20 @@ body {
 /* ── Typography ──────────────────────────────────────── */
 .logo { font-size: 1.7rem; font-weight: 700; text-align: center; margin-bottom: 6px; }
 .sub  { text-align: center; color: var(--muted); margin-bottom: 22px; font-size: .9rem; }
+
+/* Logo obrázok — scan stránka (vycentrované, s odsadením) */
+.site-logo {
+  display: block;
+  max-width: 200px;
+  height: auto;
+  margin: 0 auto 22px;
+}
+
+/* Logo obrázok — admin hlavička (menšie, v riadku) */
+.header-logo {
+  height: 40px;
+  width: auto;
+}
 h2   { font-size: 1.15rem; font-weight: 600; }
 
 /* ── Form elements ───────────────────────────────────── */
