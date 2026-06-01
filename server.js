@@ -346,14 +346,6 @@ app.get('/api/monthly-report', authMW, (req, res) => {
     Object.keys(byDate).sort().forEach(date => {
       const day = byDate[date].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-      const hasPrichod      = day.some(r => r.action === 'prichod');
-      const hasOdchod       = day.some(r => r.action === 'odchod');
-      const hasOdchodMontaz = day.some(r => r.action === 'odchod_montaz');
-
-      // Meal contribution: full HQ day — came in, went out, no assembly trip
-      const mealDay = hasPrichod && hasOdchod && !hasOdchodMontaz;
-      if (mealDay) totalMealDays++;
-
       const assemblyMs    = assemblyMsByDay[date] || 0;
       const assemblyHours = assemblyMs / 3_600_000;
       totalDietHours += assemblyHours;
@@ -364,6 +356,14 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       else if (assemblyHours >= 5)  dayDiet = cfg.dietRate5to12;
 
       totalDiet += dayDiet;
+
+      // Meal contribution: employee was at HQ that day (prichod + odchod) AND
+      // no diéta was awarded. A short assembly (<5h) doesn't qualify for diéta
+      // but the worker still spent the day on the job, so they get stravné.
+      const hasPrichod = day.some(r => r.action === 'prichod');
+      const hasOdchod  = day.some(r => r.action === 'odchod');
+      const mealDay    = hasPrichod && hasOdchod && dayDiet === 0;
+      if (mealDay) totalMealDays++;
 
       // Worked hours per day:
       //   HQ day        → span from first to last record
