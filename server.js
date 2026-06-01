@@ -65,6 +65,55 @@ function localTime(iso) {
   });
 }
 
+// Returns YYYY-MM-DD for the local Europe/Bratislava date of a UTC ms timestamp.
+function bratislavaISODate(ms) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Bratislava',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(ms));
+  const get = t => parts.find(p => p.type === t).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+// Returns UTC ms of the next local-Bratislava midnight strictly after `ms`.
+// Handles DST transitions by probing both possible UTC offsets.
+function nextBratislavaMidnight(ms) {
+  const iso = bratislavaISODate(ms);
+  const [y, m, d] = iso.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const tomorrow = `${next.getUTCFullYear()}-`
+    + `${String(next.getUTCMonth() + 1).padStart(2, '0')}-`
+    + `${String(next.getUTCDate()).padStart(2, '0')}`;
+  for (const off of ['+01:00', '+02:00']) {
+    const candidate = Date.parse(`${tomorrow}T00:00:00${off}`);
+    if (bratislavaISODate(candidate) === tomorrow) {
+      const hour = parseInt(new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Bratislava', hour: '2-digit', hour12: false,
+      }).format(new Date(candidate)), 10);
+      if (hour === 0) return candidate;
+    }
+  }
+  return Date.parse(`${tomorrow}T00:00:00+01:00`);
+}
+
+// Splits a time interval [startMs, endMs) into chunks per local Bratislava day.
+// Returns { localDateKey -> ms }. Handles multi-day spans and DST.
+function splitMsByLocalDay(startMs, endMs) {
+  const out = {};
+  if (endMs <= startMs) return out;
+  let cursor = startMs;
+  // Guard against runaway loops (>366 days = clearly bogus data)
+  let guard = 400;
+  while (cursor < endMs && guard-- > 0) {
+    const key   = localDateKey(cursor);
+    const next  = nextBratislavaMidnight(cursor);
+    const chunk = Math.min(next, endMs);
+    out[key] = (out[key] || 0) + (chunk - cursor);
+    cursor   = chunk;
+  }
+  return out;
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 const ADMIN_PW = 'admin123';
 const sessions = new Set();
@@ -244,24 +293,52 @@ app.get('/api/monthly-report', authMW, (req, res) => {
   const y   = parseInt(year);
   const cfg = readSettings();
 
-  const monthRecords = read(FILES.records).filter(r => {
-    const d = new Date(r.timestamp);
-    return d.getMonth() + 1 === m && d.getFullYear() === y;
-  });
+  const allRecords = read(FILES.records);
+  // Whether a local date string (sk-SK "DD. MM. YYYY") falls in the queried month.
+  const isInMonth = (dayKey) => {
+    const parts = dayKey.match(/(\d+)\.\s*(\d+)\.\s*(\d+)/);
+    return parts && parseInt(parts[2]) === m && parseInt(parts[3]) === y;
+  };
 
   const report = read(FILES.employees).map(emp => {
-    const empRecs = monthRecords
+    // ALL records for this employee, sorted — needed so multi-day montáž that
+    // crosses a month boundary (e.g. depart Oct 30 → return Nov 2) is paired correctly.
+    const empAll = allRecords
       .filter(r => r.employeeId === emp.id)
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    if (!empRecs.length) return null;
+    // Pair odchod_montaz → next unused navrat_montaz across the whole history,
+    // then distribute the elapsed time across the local days it spans.
+    const assemblyMsByDay = {};
+    const deps = empAll.filter(r => r.action === 'odchod_montaz');
+    const rets = empAll.filter(r => r.action === 'navrat_montaz').slice();
+    for (const dep of deps) {
+      const depMs = new Date(dep.timestamp).getTime();
+      const retIdx = rets.findIndex(r => new Date(r.timestamp).getTime() > depMs);
+      if (retIdx < 0) continue;
+      const retMs = new Date(rets[retIdx].timestamp).getTime();
+      rets.splice(retIdx, 1);
+      const perDay = splitMsByLocalDay(depMs, retMs);
+      for (const [day, ms] of Object.entries(perDay)) {
+        assemblyMsByDay[day] = (assemblyMsByDay[day] || 0) + ms;
+      }
+    }
 
-    // Group by local date
+    // Records that fall within the queried month (by local date — matches grouping).
+    const empMonth = empAll.filter(r => isInMonth(localDateKey(r.timestamp)));
+
+    // Days to report: any day in the queried month with EITHER a record OR assembly time
+    // (the latter covers the middle days of a multi-day trip where no clock events exist).
     const byDate = {};
-    empRecs.forEach(r => {
+    empMonth.forEach(r => {
       const k = localDateKey(r.timestamp);
       (byDate[k] = byDate[k] || []).push(r);
     });
+    Object.keys(assemblyMsByDay).filter(isInMonth).forEach(k => {
+      if (!byDate[k]) byDate[k] = [];
+    });
+
+    if (Object.keys(byDate).length === 0) return null;
 
     let totalMealDays = 0, totalDiet = 0, totalDietHours = 0, totalWorkedHours = 0;
     const dailyDetails = [];
@@ -269,27 +346,15 @@ app.get('/api/monthly-report', authMW, (req, res) => {
     Object.keys(byDate).sort().forEach(date => {
       const day = byDate[date].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-      const hasPrichod     = day.some(r => r.action === 'prichod');
-      const hasOdchod      = day.some(r => r.action === 'odchod');
+      const hasPrichod      = day.some(r => r.action === 'prichod');
+      const hasOdchod       = day.some(r => r.action === 'odchod');
       const hasOdchodMontaz = day.some(r => r.action === 'odchod_montaz');
 
       // Meal contribution: full HQ day — came in, went out, no assembly trip
       const mealDay = hasPrichod && hasOdchod && !hasOdchodMontaz;
       if (mealDay) totalMealDays++;
 
-      // Pair odchod_montaz → navrat_montaz (same day)
-      const deps = day.filter(r => r.action === 'odchod_montaz').map(r => new Date(r.timestamp)).sort((a,b) => a-b);
-      let   rets = day.filter(r => r.action === 'navrat_montaz').map(r => new Date(r.timestamp)).sort((a,b) => a-b);
-
-      let assemblyMs = 0;
-      for (const dep of deps) {
-        const ret = rets.find(r => r > dep);
-        if (ret) {
-          assemblyMs += ret - dep;
-          rets = rets.filter(r => r !== ret);
-        }
-      }
-
+      const assemblyMs    = assemblyMsByDay[date] || 0;
       const assemblyHours = assemblyMs / 3_600_000;
       totalDietHours += assemblyHours;
 
@@ -300,10 +365,13 @@ app.get('/api/monthly-report', authMW, (req, res) => {
 
       totalDiet += dayDiet;
 
-      // Worked hours per day: span from earliest to latest event of that day.
-      // Admin can edit records if a missing clock-out makes this look wrong.
-      const times = day.map(r => new Date(r.timestamp).getTime());
-      const workedMs    = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0;
+      // Worked hours per day:
+      //   HQ day        → span from first to last record
+      //   middle of trip → no records, use assembly time for that day
+      //   mixed         → whichever is larger
+      const times    = day.map(r => new Date(r.timestamp).getTime());
+      const spanMs   = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0;
+      const workedMs = Math.max(spanMs, assemblyMs);
       const workedHours = workedMs / 3_600_000;
       totalWorkedHours += workedHours;
 
