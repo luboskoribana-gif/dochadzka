@@ -307,22 +307,28 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       .filter(r => r.employeeId === emp.id)
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    // Pair odchod_montaz → next unused navrat_montaz across the whole history,
-    // then distribute the elapsed time across the local days it spans.
+    // Walk records chronologically. odchod_montaz opens an assembly interval;
+    // the next non-odchod_montaz event closes it. If navrat_montaz is missing
+    // (employee forgot to log it), the next event — typically odchod, or
+    // prichod the next day — closes the interval implicitly: being back at
+    // HQ to clock out/in implies they returned from assembly.
     const assemblyMsByDay = {};
-    const deps = empAll.filter(r => r.action === 'odchod_montaz');
-    const rets = empAll.filter(r => r.action === 'navrat_montaz').slice();
-    for (const dep of deps) {
-      const depMs = new Date(dep.timestamp).getTime();
-      const retIdx = rets.findIndex(r => new Date(r.timestamp).getTime() > depMs);
-      if (retIdx < 0) continue;
-      const retMs = new Date(rets[retIdx].timestamp).getTime();
-      rets.splice(retIdx, 1);
-      const perDay = splitMsByLocalDay(depMs, retMs);
-      for (const [day, ms] of Object.entries(perDay)) {
-        assemblyMsByDay[day] = (assemblyMsByDay[day] || 0) + ms;
+    let pendingDepart = null;
+    for (const r of empAll) {
+      if (r.action === 'odchod_montaz') {
+        if (pendingDepart === null) pendingDepart = new Date(r.timestamp).getTime();
+        // already on assembly → treat duplicate odchod_montaz as no-op
+      } else if (pendingDepart !== null) {
+        const endMs = new Date(r.timestamp).getTime();
+        const perDay = splitMsByLocalDay(pendingDepart, endMs);
+        for (const [day, ms] of Object.entries(perDay)) {
+          assemblyMsByDay[day] = (assemblyMsByDay[day] || 0) + ms;
+        }
+        pendingDepart = null;
       }
     }
+    // pendingDepart still set → unmatched depart with no return anywhere;
+    // ignore so admin can fix manually.
 
     // Records that fall within the queried month (by local date — matches grouping).
     const empMonth = empAll.filter(r => isInMonth(localDateKey(r.timestamp)));
