@@ -93,6 +93,7 @@ small { color: var(--muted); font-size: .78rem; display: block; margin-top: 3px;
 .btn-danger    { background: #ef4444;       color: #fff; }
 .btn-ghost     { background: #e2e8f0;       color: var(--text); }
 .btn-full      { width: 100%; padding: 13px; font-size: 1.05rem; }
+.btn-sm        { padding: 4px 10px; font-size: .78rem; border-radius: 6px; }
 
 /* ── Badges ──────────────────────────────────────────── */
 .badge {
@@ -104,6 +105,14 @@ small { color: var(--muted); font-size: .78rem; display: block; margin-top: 3px;
 .b-orange { background: #ffedd5; color: #c2410c; }
 .b-blue   { background: #dbeafe; color: #1d4ed8; }
 .b-gray   { background: #f1f5f9; color: var(--muted); }
+
+/* Clickable badge — used in monthly report to edit a record by clicking its time */
+.badge-btn {
+  border: none; cursor: pointer; font-family: inherit;
+  transition: filter .15s, transform .05s;
+}
+.badge-btn:hover  { filter: brightness(.93); }
+.badge-btn:active { transform: translateY(1px); }
 
 /* ── Messages ────────────────────────────────────────── */
 .msg            { padding: 11px 14px; border-radius: 8px; font-weight: 500; margin-top: 14px; }
@@ -235,6 +244,37 @@ tbody tr:hover td { background: #fafbff; }
 }
 .detail-toggle:hover { background: var(--bg); }
 
+.report-emp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding-bottom: 12px; margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.report-emp-head h3 { border-bottom: none; padding: 0; margin: 0; }
+
+/* ── Modal ───────────────────────────────────────────── */
+.modal {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, .55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 500; padding: 16px;
+}
+.modal-content {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 100%; max-width: 420px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25);
+}
+.modal-content h3 {
+  font-size: 1.1rem; font-weight: 600;
+  margin-bottom: 16px;
+}
+.modal-actions {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: 18px;
+}
+
 /* ── QR codes ────────────────────────────────────────── */
 .qr-grid {
   display: grid;
@@ -263,6 +303,15 @@ tbody tr:hover td { background: #fafbff; }
   .card, .report-block, .qr-card { box-shadow: none; }
   .qr-grid { grid-template-columns: repeat(2, 1fr); }
   .tab-pane { display: block !important; }
+  /* Always expand day details when printing the report */
+  .day-detail.hidden, .day-detail { display: block !important; }
+  .modal { display: none !important; }
+}
+
+/* When printing a single employee, hide everything else in the report */
+@media print {
+  body.print-emp-only .report-block:not(.print-target) { display: none !important; }
+  body.print-emp-only .report-meta                     { display: none !important; }
 }
 
 /* ── Mobile ──────────────────────────────────────────── */

@@ -33,6 +33,25 @@ const read  = f      => JSON.parse(fs.readFileSync(f, 'utf8'));
 const write = (f, d) => fs.writeFileSync(f, JSON.stringify(d, null, 2));
 const r2    = n      => Math.round(n * 100) / 100;
 
+// Settings reader normalizes legacy single-rate format to 3 explicit diet rates.
+// Existing files with only { dietRate, mealContribution } continue to work —
+// the 3 tiers are derived (50% / 75% / 100%) until the admin saves new values.
+function readSettings() {
+  const raw  = read(FILES.settings);
+  const base = parseFloat(raw.dietRate);
+  const baseRate = Number.isFinite(base) ? base : 17.40;
+  const pick = (v, fallback) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return {
+    dietRate5to12:    pick(raw.dietRate5to12,  r2(baseRate * 0.50)),
+    dietRate12to18:   pick(raw.dietRate12to18, r2(baseRate * 0.75)),
+    dietRate18plus:   pick(raw.dietRate18plus, r2(baseRate)),
+    mealContribution: pick(raw.mealContribution, 2.81),
+  };
+}
+
 function localDateKey(iso) {
   return new Date(iso).toLocaleDateString('sk-SK', {
     timeZone: 'Europe/Bratislava',
@@ -117,6 +136,69 @@ app.post('/api/records', (req, res) => {
   res.json(record);
 });
 
+// Admin can create a record at an arbitrary time (used when someone forgot to clock).
+app.post('/api/records/manual', authMW, (req, res) => {
+  const { employeeId, action, timestamp } = req.body;
+  if (!VALID_ACTIONS.includes(action))
+    return res.status(400).json({ error: 'Neplatná akcia' });
+  const emp = read(FILES.employees).find(e => e.id === employeeId);
+  if (!emp) return res.status(400).json({ error: 'Zamestnanec nenájdený' });
+  const ts = new Date(timestamp);
+  if (!timestamp || isNaN(ts.getTime()))
+    return res.status(400).json({ error: 'Neplatný dátum/čas' });
+
+  const records = read(FILES.records);
+  const record  = {
+    id: Date.now().toString() + Math.floor(Math.random() * 1000),
+    employeeId:   emp.id,
+    employeeName: emp.name,
+    action,
+    timestamp:    ts.toISOString(),
+    manual:       true,
+  };
+  records.push(record);
+  write(FILES.records, records);
+  res.json(record);
+});
+
+app.put('/api/records/:id', authMW, (req, res) => {
+  const records = read(FILES.records);
+  const idx     = records.findIndex(r => r.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: 'Záznam nenájdený' });
+  const rec = records[idx];
+
+  if (req.body.employeeId !== undefined && req.body.employeeId !== rec.employeeId) {
+    const emp = read(FILES.employees).find(e => e.id === req.body.employeeId);
+    if (!emp) return res.status(400).json({ error: 'Zamestnanec nenájdený' });
+    rec.employeeId   = emp.id;
+    rec.employeeName = emp.name;
+  }
+  if (req.body.action !== undefined) {
+    if (!VALID_ACTIONS.includes(req.body.action))
+      return res.status(400).json({ error: 'Neplatná akcia' });
+    rec.action = req.body.action;
+  }
+  if (req.body.timestamp !== undefined) {
+    const ts = new Date(req.body.timestamp);
+    if (isNaN(ts.getTime()))
+      return res.status(400).json({ error: 'Neplatný dátum/čas' });
+    rec.timestamp = ts.toISOString();
+  }
+  rec.editedAt = new Date().toISOString();
+  records[idx] = rec;
+  write(FILES.records, records);
+  res.json(rec);
+});
+
+app.delete('/api/records/:id', authMW, (req, res) => {
+  const records  = read(FILES.records);
+  const filtered = records.filter(r => r.id !== req.params.id);
+  if (filtered.length === records.length)
+    return res.status(404).json({ error: 'Záznam nenájdený' });
+  write(FILES.records, filtered);
+  res.json({ ok: true });
+});
+
 app.get('/api/records', authMW, (req, res) => {
   let records = read(FILES.records);
   const { month, year, employeeId } = req.query;
@@ -133,15 +215,24 @@ app.get('/api/records', authMW, (req, res) => {
 });
 
 // ─── Settings ────────────────────────────────────────────────────────────────
-app.get('/api/settings', authMW, (req, res) => res.json(read(FILES.settings)));
+app.get('/api/settings', authMW, (req, res) => res.json(readSettings()));
 
 app.put('/api/settings', authMW, (req, res) => {
+  const pick = (v, fallback) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
   const settings = {
-    dietRate:         parseFloat(req.body.dietRate)         || 17.40,
-    mealContribution: parseFloat(req.body.mealContribution) || 2.81,
+    dietRate5to12:    pick(req.body.dietRate5to12,    0),
+    dietRate12to18:   pick(req.body.dietRate12to18,   0),
+    dietRate18plus:   pick(req.body.dietRate18plus,   0),
+    mealContribution: pick(req.body.mealContribution, 2.81),
+    // Keep `dietRate` mirrored to the 18+h rate for backward compatibility
+    // with any callers that still read the legacy field.
+    dietRate:         pick(req.body.dietRate18plus,   0),
   };
   write(FILES.settings, settings);
-  res.json(settings);
+  res.json(readSettings());
 });
 
 // ─── Monthly report ──────────────────────────────────────────────────────────
@@ -151,7 +242,7 @@ app.get('/api/monthly-report', authMW, (req, res) => {
 
   const m   = parseInt(month);
   const y   = parseInt(year);
-  const cfg = read(FILES.settings);
+  const cfg = readSettings();
 
   const monthRecords = read(FILES.records).filter(r => {
     const d = new Date(r.timestamp);
@@ -172,7 +263,7 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       (byDate[k] = byDate[k] || []).push(r);
     });
 
-    let totalMealDays = 0, totalDiet = 0, totalDietHours = 0;
+    let totalMealDays = 0, totalDiet = 0, totalDietHours = 0, totalWorkedHours = 0;
     const dailyDetails = [];
 
     Object.keys(byDate).sort().forEach(date => {
@@ -203,17 +294,30 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       totalDietHours += assemblyHours;
 
       let dayDiet = 0;
-      if      (assemblyHours >= 18) dayDiet = cfg.dietRate;
-      else if (assemblyHours >= 12) dayDiet = cfg.dietRate * 0.75;
-      else if (assemblyHours >= 5)  dayDiet = cfg.dietRate * 0.50;
+      if      (assemblyHours >= 18) dayDiet = cfg.dietRate18plus;
+      else if (assemblyHours >= 12) dayDiet = cfg.dietRate12to18;
+      else if (assemblyHours >= 5)  dayDiet = cfg.dietRate5to12;
 
       totalDiet += dayDiet;
 
+      // Worked hours per day: span from earliest to latest event of that day.
+      // Admin can edit records if a missing clock-out makes this look wrong.
+      const times = day.map(r => new Date(r.timestamp).getTime());
+      const workedMs    = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0;
+      const workedHours = workedMs / 3_600_000;
+      totalWorkedHours += workedHours;
+
       dailyDetails.push({
         date,
-        records:      day.map(r => ({ action: r.action, time: localTime(r.timestamp) })),
+        records:      day.map(r => ({
+          id:        r.id,
+          action:    r.action,
+          time:      localTime(r.timestamp),
+          timestamp: r.timestamp,
+        })),
         mealDay,
         assemblyHours: r2(assemblyHours),
+        workedHours:   r2(workedHours),
         dayDiet:       r2(dayDiet),
       });
     });
@@ -223,6 +327,7 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       totalMealDays,
       totalMealContribution: r2(totalMealDays * cfg.mealContribution),
       totalDietHours:        r2(totalDietHours),
+      totalWorkedHours:      r2(totalWorkedHours),
       totalDiet:             r2(totalDiet),
       dailyDetails,
     };

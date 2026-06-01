@@ -21,6 +21,9 @@ let token = localStorage.getItem('dochadzka_token') || '';
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   initSelects();
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeRecordModal();
+  });
   if (token) showAdmin();
 });
 
@@ -107,6 +110,7 @@ async function loadEmps() {
   const res  = await api('GET', '/api/employees');
   if (!res) return;
   const list = await res.json();
+  employeesCache = list;
 
   // Grid
   const grid = document.getElementById('emp-grid');
@@ -142,6 +146,8 @@ async function delEmp(id) {
 }
 
 // ── Records ───────────────────────────────────────────────────────────────────
+let employeesCache = [];
+
 async function loadRecords() {
   const month = document.getElementById('f-month').value;
   const year  = document.getElementById('f-year').value;
@@ -155,6 +161,7 @@ async function loadRecords() {
   const res = await api('GET', url);
   if (!res) return;
   const records = await res.json();
+  recordsCache = records.slice();
 
   records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
@@ -162,31 +169,162 @@ async function loadRecords() {
   tbody.innerHTML = records.length
     ? records.map(r => {
         const d = new Date(r.timestamp);
+        const editedMark = r.editedAt ? ' <span class="badge b-gray" title="Upravené administrátorom">upr.</span>' : '';
+        const manualMark = r.manual   ? ' <span class="badge b-gray" title="Manuálne pridané">man.</span>'        : '';
         return `<tr>
           <td>${d.toLocaleDateString('sk-SK',  { timeZone:'Europe/Bratislava' })}</td>
           <td>${d.toLocaleTimeString('sk-SK',  { timeZone:'Europe/Bratislava', hour:'2-digit', minute:'2-digit' })}</td>
-          <td>${esc(r.employeeName)}</td>
+          <td>${esc(r.employeeName)}${manualMark}${editedMark}</td>
           <td><span class="badge ${ACTION_BADGE[r.action] || 'b-gray'}">${ACTION_LABEL[r.action] || r.action}</span></td>
+          <td class="no-print">
+            <button class="btn btn-ghost btn-sm" onclick="openRecordEdit('${r.id}')">✎ Upraviť</button>
+          </td>
         </tr>`;
       }).join('')
-    : '<tr><td colspan="4" class="no-data">Žiadne záznamy pre zvolený filter</td></tr>';
+    : '<tr><td colspan="5" class="no-data">Žiadne záznamy pre zvolený filter</td></tr>';
+}
+
+// ── Record edit/add modal ─────────────────────────────────────────────────────
+let recordsCache  = [];   // last loaded records (raw, with timestamp)
+let editingRecord = null; // record id being edited, or null when adding
+
+function isoToLocalInput(iso) {
+  // Format a UTC timestamp as a local datetime-local string in admin's browser tz.
+  // Records are displayed in Europe/Bratislava; admin's browser is assumed
+  // to be in the same tz (Slovak company).
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+       + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function nowLocalInput() {
+  return isoToLocalInput(new Date().toISOString());
+}
+
+function fillEmployeeSelect(selectedId) {
+  const sel = document.getElementById('rm-emp');
+  sel.innerHTML = '';
+  employeesCache.forEach(e => sel.appendChild(new Option(e.name, e.id)));
+  if (selectedId) sel.value = selectedId;
+}
+
+function openRecordModal({ title, employeeId, action, timestamp, recordId }) {
+  document.getElementById('rm-title').textContent = title;
+  fillEmployeeSelect(employeeId);
+  document.getElementById('rm-action').value = action || 'prichod';
+  document.getElementById('rm-time').value   = timestamp || nowLocalInput();
+  document.getElementById('rm-msg').className = 'msg msg-err hidden';
+  document.getElementById('rm-delete').style.display = recordId ? '' : 'none';
+  editingRecord = recordId || null;
+  document.getElementById('rec-modal').classList.remove('hidden');
+}
+
+function closeRecordModal() {
+  document.getElementById('rec-modal').classList.add('hidden');
+  editingRecord = null;
+}
+
+async function openRecordEdit(id) {
+  // Try in-memory first; fall back to fetching the record list.
+  let rec = recordsCache.find(r => r.id === id);
+  if (!rec) {
+    const res = await api('GET', '/api/records');
+    if (!res) return;
+    recordsCache = await res.json();
+    rec = recordsCache.find(r => r.id === id);
+  }
+  if (!rec) return showRmErr('Záznam sa nenašiel.');
+  openRecordModal({
+    title:      'Upraviť záznam',
+    employeeId: rec.employeeId,
+    action:     rec.action,
+    timestamp:  isoToLocalInput(rec.timestamp),
+    recordId:   rec.id,
+  });
+}
+
+function openRecordAdd(prefill = {}) {
+  if (!employeesCache.length) return showRmErr('Najprv pridajte zamestnanca.');
+  openRecordModal({
+    title:      'Pridať záznam',
+    employeeId: prefill.employeeId || employeesCache[0].id,
+    action:     prefill.action     || 'prichod',
+    timestamp:  prefill.timestamp  || nowLocalInput(),
+    recordId:   null,
+  });
+}
+
+function showRmErr(text) {
+  const el = document.getElementById('rm-msg');
+  el.textContent = text;
+  el.className   = 'msg msg-err';
+}
+
+async function saveRecord() {
+  const employeeId = document.getElementById('rm-emp').value;
+  const action     = document.getElementById('rm-action').value;
+  const localTime  = document.getElementById('rm-time').value;
+  if (!localTime) return showRmErr('Zadajte dátum a čas.');
+  const ts = new Date(localTime);
+  if (isNaN(ts.getTime())) return showRmErr('Neplatný dátum/čas.');
+  const timestamp = ts.toISOString();
+
+  let res;
+  if (editingRecord) {
+    res = await api('PUT', `/api/records/${editingRecord}`, { employeeId, action, timestamp });
+  } else {
+    res = await api('POST', '/api/records/manual', { employeeId, action, timestamp });
+  }
+  if (!res?.ok) {
+    const err = await res?.json().catch(() => ({}));
+    return showRmErr(err.error || 'Chyba pri ukladaní záznamu.');
+  }
+  closeRecordModal();
+  await loadRecords();
+  // If the monthly report is currently visible, refresh it too.
+  if (document.getElementById('pane-report').classList.contains('active')) {
+    loadReport();
+  }
+}
+
+async function deleteRecord() {
+  if (!editingRecord) return;
+  if (!confirm('Naozaj vymazať tento záznam?')) return;
+  const res = await api('DELETE', `/api/records/${editingRecord}`);
+  if (!res?.ok) return showRmErr('Záznam sa nepodarilo vymazať.');
+  closeRecordModal();
+  await loadRecords();
+  if (document.getElementById('pane-report').classList.contains('active')) {
+    loadReport();
+  }
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
+let currentSettings = null;
+
 async function loadSettings() {
   const res = await api('GET', '/api/settings');
   if (!res) return;
   const s = await res.json();
-  document.getElementById('s-diet').value = s.dietRate;
-  document.getElementById('s-meal').value = s.mealContribution;
+  currentSettings = s;
+  document.getElementById('s-diet-5').value  = s.dietRate5to12;
+  document.getElementById('s-diet-12').value = s.dietRate12to18;
+  document.getElementById('s-diet-18').value = s.dietRate18plus;
+  document.getElementById('s-meal').value    = s.mealContribution;
 }
 
 async function saveSettings() {
-  const dietRate         = parseFloat(document.getElementById('s-diet').value);
-  const mealContribution = parseFloat(document.getElementById('s-meal').value);
-  const res = await api('PUT', '/api/settings', { dietRate, mealContribution });
+  const body = {
+    dietRate5to12:    parseFloat(document.getElementById('s-diet-5').value),
+    dietRate12to18:   parseFloat(document.getElementById('s-diet-12').value),
+    dietRate18plus:   parseFloat(document.getElementById('s-diet-18').value),
+    mealContribution: parseFloat(document.getElementById('s-meal').value),
+  };
+  const res = await api('PUT', '/api/settings', body);
   const el  = document.getElementById('s-msg');
   if (res?.ok) {
+    currentSettings = await res.json();
     el.textContent = '✓ Nastavenia uložené';
     el.className   = 'msg msg-ok';
   } else {
@@ -214,22 +352,25 @@ async function loadReport() {
 
   const { report, settings: s } = data;
   const monthName = MONTHS[data.month - 1];
+  reportContext = { month: data.month, year: data.year };
 
   out.innerHTML = `
-    <p style="color:var(--muted);margin-bottom:16px;font-size:.88rem">
+    <p class="report-meta" style="color:var(--muted);margin-bottom:16px;font-size:.88rem">
       ${monthName} ${data.year} &nbsp;·&nbsp;
-      Sadzba diéty: <strong>${s.dietRate} €/deň</strong> &nbsp;·&nbsp;
-      Príspevok na stravu: <strong>${s.mealContribution} €/deň</strong>
+      Diéty: <strong>${s.dietRate5to12.toFixed(2)} / ${s.dietRate12to18.toFixed(2)} / ${s.dietRate18plus.toFixed(2)} €</strong>
+      (5–12 / 12–18 / 18+ h) &nbsp;·&nbsp;
+      Strava: <strong>${s.mealContribution.toFixed(2)} €/deň</strong>
     </p>
 
     <!-- Summary table -->
-    <div class="report-block">
-      <h3>Súhrn</h3>
+    <div class="report-block report-summary">
+      <h3>Súhrn – ${monthName} ${data.year}</h3>
       <div class="tbl-wrap">
         <table>
           <thead>
             <tr>
               <th>Zamestnanec</th>
+              <th>Odpracované</th>
               <th>Dni (strava)</th>
               <th>Prísp. strava</th>
               <th>Hod. montáž</th>
@@ -241,6 +382,7 @@ async function loadReport() {
             ${report.map(row => `
               <tr>
                 <td><strong>${esc(row.employee.name)}</strong></td>
+                <td><strong>${row.totalWorkedHours.toFixed(1)} h</strong></td>
                 <td>${row.totalMealDays}</td>
                 <td><strong>${row.totalMealContribution.toFixed(2)} €</strong></td>
                 <td>${row.totalDietHours.toFixed(1)} h</td>
@@ -254,9 +396,13 @@ async function loadReport() {
 
     <!-- Per-employee detail -->
     ${report.map(row => `
-      <div class="report-block">
-        <h3>${esc(row.employee.name)}</h3>
+      <div class="report-block report-emp" data-emp-id="${row.employee.id}">
+        <div class="report-emp-head">
+          <h3>${esc(row.employee.name)} <span style="color:var(--muted);font-weight:400;font-size:.85rem">– ${monthName} ${data.year}</span></h3>
+          <button class="btn btn-ghost no-print" onclick="printEmployee('${row.employee.id}')">🖨 Tlač zamestnanca</button>
+        </div>
         <div class="stats-row">
+          <div class="stat"><div class="val">${row.totalWorkedHours.toFixed(1)} h</div><div class="lbl">Odpracované</div></div>
           <div class="stat"><div class="val">${row.totalMealDays}</div><div class="lbl">Dni so stravou</div></div>
           <div class="stat"><div class="val">${row.totalMealContribution.toFixed(2)} €</div><div class="lbl">Prísp. strava</div></div>
           <div class="stat"><div class="val">${row.totalDietHours.toFixed(1)} h</div><div class="lbl">Na montáži</div></div>
@@ -268,20 +414,33 @@ async function loadReport() {
           <div class="tbl-wrap">
             <table>
               <thead>
-                <tr><th>Dátum</th><th>Záznamy</th><th>Strava</th><th>Montáž</th><th>Diéta</th></tr>
+                <tr>
+                  <th>Dátum</th>
+                  <th>Záznamy</th>
+                  <th>Odpracované</th>
+                  <th>Strava</th>
+                  <th>Montáž</th>
+                  <th>Diéta</th>
+                  <th class="no-print">+</th>
+                </tr>
               </thead>
               <tbody>
                 ${row.dailyDetails.map(d => `
                   <tr>
                     <td style="white-space:nowrap">${d.date}</td>
                     <td>${d.records.map(r =>
-                        `<span class="badge ${ACTION_BADGE[r.action] || 'b-gray'}" title="${ACTION_LABEL[r.action]}">${r.time}</span>`
+                        `<button type="button" class="badge badge-btn ${ACTION_BADGE[r.action] || 'b-gray'}" title="${ACTION_LABEL[r.action]} – klik pre úpravu" onclick="openRecordEdit('${r.id}')">${r.time}</button>`
                       ).join(' ')}</td>
+                    <td><strong>${d.workedHours > 0 ? d.workedHours.toFixed(1) + ' h' : '–'}</strong></td>
                     <td>${d.mealDay
                         ? '<span class="badge b-green">✓</span>'
                         : '<span class="badge b-gray">–</span>'}</td>
                     <td>${d.assemblyHours > 0 ? d.assemblyHours.toFixed(1) + ' h' : '–'}</td>
                     <td>${d.dayDiet > 0 ? d.dayDiet.toFixed(2) + ' €' : '–'}</td>
+                    <td class="no-print">
+                      <button class="btn btn-ghost btn-sm" title="Pridať záznam na tento deň"
+                        onclick="openRecordAddForDay('${row.employee.id}', '${d.date}')">+</button>
+                    </td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -289,6 +448,40 @@ async function loadReport() {
         </div>
       </div>`).join('')}
   `;
+}
+
+let reportContext = null;
+
+// Convert "DD. MM. YYYY" (sk-SK) → "YYYY-MM-DDTHH:MM" using a default morning time.
+function dateLabelToLocalInput(label) {
+  const m = label.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})/);
+  if (!m) return nowLocalInput();
+  const [, dd, mm, yyyy] = m;
+  const pad = n => String(n).padStart(2, '0');
+  return `${yyyy}-${pad(mm)}-${pad(dd)}T08:00`;
+}
+
+function openRecordAddForDay(employeeId, dateLabel) {
+  openRecordAdd({ employeeId, timestamp: dateLabelToLocalInput(dateLabel) });
+}
+
+function printEmployee(empId) {
+  const block = document.querySelector(`.report-emp[data-emp-id="${empId}"]`);
+  if (!block) return;
+  // Expand the day detail before printing so it shows on paper.
+  const detail = block.querySelector('.day-detail');
+  const wasHidden = detail.classList.contains('hidden');
+  if (wasHidden) detail.classList.remove('hidden');
+
+  block.classList.add('print-target');
+  document.body.classList.add('print-emp-only');
+  window.print();
+  // Restore state shortly after print dialog closes.
+  setTimeout(() => {
+    document.body.classList.remove('print-emp-only');
+    block.classList.remove('print-target');
+    if (wasHidden) detail.classList.add('hidden');
+  }, 200);
 }
 
 function toggleDetail(btn) {

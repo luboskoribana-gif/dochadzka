@@ -62,7 +62,10 @@
     <div id="pane-records" class="tab-pane">
       <div class="sec-head">
         <h2>Záznamy dochádzky</h2>
-        <button class="btn btn-ghost no-print" onclick="loadRecords()">↺ Obnoviť</button>
+        <div class="filter-bar no-print" style="margin:0">
+          <button class="btn btn-success" onclick="openRecordAdd()">+ Manuálne pridať</button>
+          <button class="btn btn-ghost" onclick="loadRecords()">↺ Obnoviť</button>
+        </div>
       </div>
       <div class="filter-bar no-print">
         <select id="f-emp">   <option value="">Všetci zamestnanci</option></select>
@@ -73,7 +76,7 @@
       <div class="tbl-wrap">
         <table>
           <thead>
-            <tr><th>Dátum</th><th>Čas</th><th>Zamestnanec</th><th>Akcia</th></tr>
+            <tr><th>Dátum</th><th>Čas</th><th>Zamestnanec</th><th>Akcia</th><th class="no-print">Úpravy</th></tr>
           </thead>
           <tbody id="rec-body"></tbody>
         </table>
@@ -99,9 +102,16 @@
       <div class="sec-head"><h2>Nastavenia</h2></div>
       <div class="settings-box">
         <div class="form-group">
-          <label>Denná sadzba diéty (€)</label>
-          <input id="s-diet" type="number" step="0.01" min="0">
-          <small>5–12 h = 50 %   |   12–18 h = 75 %   |   18+ h = 100 %</small>
+          <label>Diéta 5–12 h (€)</label>
+          <input id="s-diet-5" type="number" step="0.01" min="0">
+        </div>
+        <div class="form-group">
+          <label>Diéta 12–18 h (€)</label>
+          <input id="s-diet-12" type="number" step="0.01" min="0">
+        </div>
+        <div class="form-group">
+          <label>Diéta nad 18 h (€)</label>
+          <input id="s-diet-18" type="number" step="0.01" min="0">
         </div>
         <div class="form-group" style="margin-top:14px">
           <label>Príspevok na stravu (€ / deň)</label>
@@ -129,6 +139,37 @@
 
   </div><!-- /container -->
 </div><!-- /admin-wrap -->
+
+<!-- Modal pre úpravu / pridanie záznamu -->
+<div id="rec-modal" class="modal hidden" onclick="if(event.target===this)closeRecordModal()">
+  <div class="modal-content">
+    <h3 id="rm-title">Upraviť záznam</h3>
+    <div class="form-group">
+      <label>Zamestnanec</label>
+      <select id="rm-emp"></select>
+    </div>
+    <div class="form-group">
+      <label>Akcia</label>
+      <select id="rm-action">
+        <option value="prichod">Príchod</option>
+        <option value="odchod">Odchod</option>
+        <option value="odchod_montaz">Odchod na montáž</option>
+        <option value="navrat_montaz">Návrat z montáže</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Dátum a čas</label>
+      <input id="rm-time" type="datetime-local" step="60">
+    </div>
+    <div id="rm-msg" class="msg msg-err hidden"></div>
+    <div class="modal-actions">
+      <button id="rm-delete" class="btn btn-danger" onclick="deleteRecord()">Vymazať</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" onclick="closeRecordModal()">Zrušiť</button>
+      <button class="btn btn-primary" onclick="saveRecord()">Uložiť</button>
+    </div>
+  </div>
+</div>
 
 <script src="/admin.js"></script>
 </body>
