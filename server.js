@@ -313,6 +313,10 @@ app.get('/api/monthly-report', authMW, (req, res) => {
     // prichod the next day — closes the interval implicitly: being back at
     // HQ to clock out/in implies they returned from assembly.
     const assemblyMsByDay = {};
+    // Any calendar day touched by an assembly interval that crosses midnight
+    // (multi-day trip). Every such day gets full diet regardless of hours
+    // logged that specific day — departure and return days included.
+    const multiDayTripDays = new Set();
     let pendingDepart = null;
     for (const r of empAll) {
       if (r.action === 'odchod_montaz') {
@@ -321,9 +325,11 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       } else if (pendingDepart !== null) {
         const endMs = new Date(r.timestamp).getTime();
         const perDay = splitMsByLocalDay(pendingDepart, endMs);
+        const daysCovered = Object.keys(perDay);
         for (const [day, ms] of Object.entries(perDay)) {
           assemblyMsByDay[day] = (assemblyMsByDay[day] || 0) + ms;
         }
+        if (daysCovered.length > 1) daysCovered.forEach(d => multiDayTripDays.add(d));
         pendingDepart = null;
       }
     }
@@ -354,21 +360,23 @@ app.get('/api/monthly-report', authMW, (req, res) => {
 
       const assemblyMs    = assemblyMsByDay[date] || 0;
       const assemblyHours = assemblyMs / 3_600_000;
+      const isMultiDay    = multiDayTripDays.has(date);
       totalDietHours += assemblyHours;
 
       let dayDiet = 0;
-      if      (assemblyHours >= 18) dayDiet = cfg.dietRate18plus;
+      if      (isMultiDay)          dayDiet = cfg.dietRate18plus;
+      else if (assemblyHours >= 18) dayDiet = cfg.dietRate18plus;
       else if (assemblyHours >= 12) dayDiet = cfg.dietRate12to18;
       else if (assemblyHours >= 5)  dayDiet = cfg.dietRate5to12;
 
       totalDiet += dayDiet;
 
-      // Meal contribution: employee was at HQ that day (prichod + odchod) AND
-      // no diéta was awarded. A short assembly (<5h) doesn't qualify for diéta
-      // but the worker still spent the day on the job, so they get stravné.
+      // Meal contribution: HQ workday only. Never on multi-day trip days —
+      // even if the person happened to clock prichod+odchod at HQ that day
+      // (e.g. arrived at HQ in the morning before departing on montáž).
       const hasPrichod = day.some(r => r.action === 'prichod');
       const hasOdchod  = day.some(r => r.action === 'odchod');
-      const mealDay    = hasPrichod && hasOdchod && dayDiet === 0;
+      const mealDay    = hasPrichod && hasOdchod && dayDiet === 0 && !isMultiDay;
       if (mealDay) totalMealDays++;
 
       // Worked hours per day:
