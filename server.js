@@ -114,6 +114,108 @@ function splitMsByLocalDay(startMs, endMs) {
   return out;
 }
 
+// Local hour (0-23) in Europe/Bratislava for a UTC timestamp.
+function bratislavaHour(iso) {
+  return parseInt(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Bratislava', hour: '2-digit', hour12: false,
+  }).format(new Date(iso)), 10);
+}
+
+// The localDateKey of the calendar day AFTER `dayKey`.
+function nextLocalDayKey(dayKey) {
+  const p = dayKey.match(/(\d+)\.\s*(\d+)\.\s*(\d+)/);
+  if (!p) return null;
+  const nextMs = Date.UTC(parseInt(p[3]), parseInt(p[2]) - 1, parseInt(p[1]) + 1, 12);
+  return localDateKey(new Date(nextMs).toISOString());
+}
+
+// UTC ISO timestamp for HH:MM local Bratislava on the given dayKey.
+function localTimestampOn(dayKey, hour, minute = 0) {
+  const p = dayKey.match(/(\d+)\.\s*(\d+)\.\s*(\d+)/);
+  const [d, m, y] = [p[1].padStart(2, '0'), p[2].padStart(2, '0'), p[3]];
+  const isoLocal = `${y}-${m}-${d}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+  for (const off of ['+02:00', '+01:00']) {
+    const ms = Date.parse(`${isoLocal}${off}`);
+    const iso = new Date(ms).toISOString();
+    if (localDateKey(iso) === dayKey && bratislavaHour(iso) === hour) return iso;
+  }
+  return new Date(Date.parse(`${isoLocal}+02:00`)).toISOString();
+}
+
+// Local day-of-week (0=Sun..6=Sat) for a date key.
+function localDayOfWeek(dayKey) {
+  const p = dayKey.match(/(\d+)\.\s*(\d+)\.\s*(\d+)/);
+  if (!p) return -1;
+  return new Date(Date.UTC(parseInt(p[3]), parseInt(p[2]) - 1, parseInt(p[1]), 12)).getUTCDay();
+}
+function isWeekendKey(k) { const d = localDayOfWeek(k); return d === 0 || d === 6; }
+
+// If a day starts with a morning prichod (person arrived at HQ before noon
+// to begin the workday) but has no leave-HQ event (odchod / odchod_montaz),
+// synthesize a close at 16:00. Which close depends on what happens next:
+//   - Next relevant day has a morning prichod → simply forgot odchod → odchod
+//   - Next relevant day has no morning prichod → went on multi-day trip → odchod_montaz
+// "Next relevant day" skips weekends without any events (so Friday's missing
+// odchod is judged against Monday, not Saturday).
+// A late-afternoon-only prichod (e.g. 14:15 return from trip) is NOT treated
+// as opening the day — it just marks the person is back at HQ.
+// Synthetic events are flagged `auto: true` and filtered from display.
+function synthesizeAutoCloses(records) {
+  if (records.length === 0) return records;
+
+  const byDate = new Map();
+  for (const r of records) {
+    const k = localDateKey(r.timestamp);
+    if (!byDate.has(k)) byDate.set(k, []);
+    byDate.get(k).push(r);
+  }
+
+  const synthetic = [];
+  for (const [date, dayEvents] of byDate.entries()) {
+    const hasMorningPrichod = dayEvents.some(r =>
+      r.action === 'prichod' && bratislavaHour(r.timestamp) < 12);
+    const hasClose = dayEvents.some(r =>
+      r.action === 'odchod' || r.action === 'odchod_montaz');
+    if (!hasMorningPrichod || hasClose) continue;
+
+    // Find next relevant day: skip weekend days that have no events at all.
+    let nextKey = nextLocalDayKey(date);
+    let guard   = 14;
+    while (nextKey && isWeekendKey(nextKey) && !byDate.has(nextKey) && guard-- > 0) {
+      nextKey = nextLocalDayKey(nextKey);
+    }
+    // Are there ANY future events? If not, default to plain odchod (person
+    // simply forgot on their last recorded day — don't spuriously start
+    // an open-ended trip that would swallow the last day's diet).
+    let anyFuture = false;
+    if (nextKey) {
+      let scan = nextKey, g = 60;
+      while (scan && g-- > 0) {
+        if (byDate.has(scan)) { anyFuture = true; break; }
+        scan = nextLocalDayKey(scan);
+      }
+    }
+    let action = 'odchod';
+    if (anyFuture) {
+      const nextMorningPrichod = (byDate.get(nextKey) || []).some(r =>
+        r.action === 'prichod' && bratislavaHour(r.timestamp) < 12);
+      action = nextMorningPrichod ? 'odchod' : 'odchod_montaz';
+    }
+    const timestamp = localTimestampOn(date, 16, 0);
+    const first     = dayEvents[0];
+    synthetic.push({
+      id:           `auto_${first.employeeId}_${date.replace(/\D/g, '')}_${action}`,
+      employeeId:   first.employeeId,
+      employeeName: first.employeeName,
+      action,
+      timestamp,
+      auto:         true,
+    });
+  }
+
+  return [...records, ...synthetic].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 const ADMIN_PW = 'admin123';
 const sessions = new Set();
@@ -303,9 +405,13 @@ app.get('/api/monthly-report', authMW, (req, res) => {
   const report = read(FILES.employees).map(emp => {
     // ALL records for this employee, sorted — needed so multi-day montáž that
     // crosses a month boundary (e.g. depart Oct 30 → return Nov 2) is paired correctly.
-    const empAll = allRecords
-      .filter(r => r.employeeId === emp.id)
-      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    // synthesizeAutoCloses injects synthetic odchod/odchod_montaz at 16:00 on days
+    // where the employee forgot to log out (see function docs).
+    const empAll = synthesizeAutoCloses(
+      allRecords
+        .filter(r => r.employeeId === emp.id)
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    );
 
     // Walk records chronologically. odchod_montaz opens an assembly interval;
     // the next non-odchod_montaz event closes it. If navrat_montaz is missing
@@ -396,6 +502,7 @@ app.get('/api/monthly-report', authMW, (req, res) => {
           action:    r.action,
           time:      localTime(r.timestamp),
           timestamp: r.timestamp,
+          auto:      r.auto || false,
         })),
         mealDay,
         assemblyHours: r2(assemblyHours),
