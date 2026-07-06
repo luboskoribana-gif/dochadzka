@@ -150,16 +150,24 @@ function localDayOfWeek(dayKey) {
 }
 function isWeekendKey(k) { const d = localDayOfWeek(k); return d === 0 || d === 6; }
 
-// If a day starts with a morning prichod (person arrived at HQ before noon
-// to begin the workday) but has no leave-HQ event (odchod / odchod_montaz),
-// synthesize a close at 16:00. Which close depends on what happens next:
-//   - Next relevant day has a morning prichod → simply forgot odchod → odchod
-//   - Next relevant day has no morning prichod → went on multi-day trip → odchod_montaz
-// "Next relevant day" skips weekends without any events (so Friday's missing
-// odchod is judged against Monday, not Saturday).
-// A late-afternoon-only prichod (e.g. 14:15 return from trip) is NOT treated
-// as opening the day — it just marks the person is back at HQ.
-// Synthetic events are flagged `auto: true` and filtered from display.
+// Two-pass synthetic close/open generator:
+//
+// Rule 1 — Missing close on a workday:
+//   Day has a morning prichod (arrival at HQ before noon) but no leave-HQ event
+//   (odchod / odchod_montaz). Inject close at 16:00 that day. Which one:
+//     - Next relevant day has a morning prichod → forgot odchod → odchod
+//     - Otherwise (and there are future events) → left on trip → odchod_montaz
+//     - No future events at all → conservative default → odchod
+//   "Next relevant day" skips weekends without any events (Friday pairs with Monday).
+//
+// Rule 2 — Multi-day gap between events implies business trip:
+//   For any consecutive event pair (a, b) whose gap covers 1+ workdays strictly
+//   between them, inject odchod_montaz at a.timestamp + 1s. Multi-day fix then
+//   awards full diet on every calendar day the interval touches. Skipped when
+//   `a` is already odchod_montaz (interval is already open).
+//
+// Synthetic events are flagged `auto: true` and rendered in the report dimmed
+// (see admin.js) — they're never persisted.
 function synthesizeAutoCloses(records) {
   if (records.length === 0) return records;
 
@@ -209,6 +217,35 @@ function synthesizeAutoCloses(records) {
       employeeName: first.employeeName,
       action,
       timestamp,
+      auto:         true,
+    });
+  }
+
+  // Rule 2: multi-day gap between events → business trip.
+  const merged = [...records, ...synthetic].sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
+  for (let i = 0; i < merged.length - 1; i++) {
+    const a = merged[i], b = merged[i + 1];
+    if (a.action === 'odchod_montaz') continue; // trip already open
+    const dayA = localDateKey(a.timestamp);
+    const dayB = localDateKey(b.timestamp);
+    if (dayA === dayB) continue;
+    // Count workdays strictly between dayA and dayB.
+    let gapWd = 0, key = nextLocalDayKey(dayA), guard = 120;
+    while (key && key !== dayB && guard-- > 0) {
+      if (!isWeekendKey(key)) gapWd++;
+      key = nextLocalDayKey(key);
+    }
+    if (gapWd < 1) continue;
+    synthetic.push({
+      id:           `auto_trip_${a.employeeId}_${new Date(a.timestamp).getTime()}`,
+      employeeId:   a.employeeId,
+      employeeName: a.employeeName,
+      action:       'odchod_montaz',
+      // +1s so the original event (odchod/prichod) still sorts first — the
+      // pairing loop treats the odchod_montaz as opening a fresh trip.
+      timestamp:    new Date(new Date(a.timestamp).getTime() + 1000).toISOString(),
       auto:         true,
     });
   }

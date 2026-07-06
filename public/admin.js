@@ -428,10 +428,13 @@ async function loadReport() {
                 ${row.dailyDetails.map(d => `
                   <tr>
                     <td style="white-space:nowrap">${d.date}</td>
-                    <td>${d.records.map(r => r.auto
-                        ? `<span class="badge ${ACTION_BADGE[r.action] || 'b-gray'}" style="opacity:.55" title="${ACTION_LABEL[r.action]} – auto-doplnené o 16:00 (zabudol sa odhlásiť)">${r.time} auto</span>`
-                        : `<button type="button" class="badge badge-btn ${ACTION_BADGE[r.action] || 'b-gray'}" title="${ACTION_LABEL[r.action]} – klik pre úpravu" onclick="openRecordEdit('${r.id}')">${r.time}</button>`
-                      ).join(' ')}</td>
+                    <td>${d.records.map(r => {
+                        if (!r.auto) return `<button type="button" class="badge badge-btn ${ACTION_BADGE[r.action] || 'b-gray'}" title="${ACTION_LABEL[r.action]} – klik pre úpravu" onclick="openRecordEdit('${r.id}')">${r.time}</button>`;
+                        const autoTip = r.action === 'odchod_montaz'
+                          ? 'Auto-doplnené: viacdňová medzera = zákazka'
+                          : 'Auto-doplnené o 16:00 (zabudol sa odhlásiť)';
+                        return `<span class="badge ${ACTION_BADGE[r.action] || 'b-gray'}" style="opacity:.55" title="${ACTION_LABEL[r.action]} – ${autoTip}">${r.time} auto</span>`;
+                      }).join(' ')}</td>
                     <td><strong>${d.workedHours > 0 ? d.workedHours.toFixed(1) + ' h' : '–'}</strong></td>
                     <td>${d.mealDay
                         ? '<span class="badge b-green">✓</span>'
