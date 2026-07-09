@@ -6,12 +6,14 @@ const ACTION_LABEL = {
   odchod:        'Odchod',
   odchod_montaz: 'Odchod na montáž',
   navrat_montaz: 'Návrat z montáže',
+  dovolenka:     'Dovolenka',
 };
 const ACTION_BADGE = {
   prichod:       'b-green',
   odchod:        'b-red',
   odchod_montaz: 'b-orange',
   navrat_montaz: 'b-blue',
+  dovolenka:     'b-gray',
 };
 const MONTHS = ['Január','Február','Marec','Apríl','Máj','Jún',
                 'Júl','August','September','Október','November','December'];
@@ -425,27 +427,40 @@ async function loadReport() {
                 </tr>
               </thead>
               <tbody>
-                ${row.dailyDetails.map(d => `
-                  <tr>
-                    <td style="white-space:nowrap">${d.date}</td>
-                    <td>${d.records.map(r => {
-                        if (!r.auto) return `<button type="button" class="badge badge-btn ${ACTION_BADGE[r.action] || 'b-gray'}" title="${ACTION_LABEL[r.action]} – klik pre úpravu" onclick="openRecordEdit('${r.id}')">${r.time}</button>`;
-                        const autoTip = r.action === 'odchod_montaz'
-                          ? 'Auto-doplnené: viacdňová medzera = zákazka'
-                          : 'Auto-doplnené o 16:00 (zabudol sa odhlásiť)';
-                        return `<span class="badge ${ACTION_BADGE[r.action] || 'b-gray'}" style="opacity:.55" title="${ACTION_LABEL[r.action]} – ${autoTip}">${r.time} auto</span>`;
-                      }).join(' ')}</td>
-                    <td><strong>${d.workedHours > 0 ? d.workedHours.toFixed(1) + ' h' : '–'}</strong></td>
-                    <td>${d.mealDay
-                        ? '<span class="badge b-green">✓</span>'
-                        : '<span class="badge b-gray">–</span>'}</td>
-                    <td>${d.assemblyHours > 0 ? d.assemblyHours.toFixed(1) + ' h' : '–'}</td>
-                    <td>${d.dayDiet > 0 ? d.dayDiet.toFixed(2) + ' €' : '–'}</td>
-                    <td class="no-print">
-                      <button class="btn btn-ghost btn-sm" title="Pridať záznam na tento deň"
-                        onclick="openRecordAddForDay('${row.employee.id}', '${d.date}')">+</button>
-                    </td>
-                  </tr>`).join('')}
+                ${row.dailyDetails.map(d => {
+                  const recCell = d.records.map(r => {
+                    if (!r.auto) return `<button type="button" class="badge badge-btn ${ACTION_BADGE[r.action] || 'b-gray'}" title="${ACTION_LABEL[r.action]} – klik pre úpravu" onclick="openRecordEdit('${r.id}')">${r.action === 'dovolenka' ? 'Dovolenka' : r.time}</button>`;
+                    const autoTip = r.action === 'odchod_montaz'
+                      ? 'Auto-doplnené: viacdňová medzera = zákazka'
+                      : 'Auto-doplnené o 16:00 (zabudol sa odhlásiť)';
+                    return `<span class="badge ${ACTION_BADGE[r.action] || 'b-gray'}" style="opacity:.55" title="${ACTION_LABEL[r.action]} – ${autoTip}">${r.time} auto</span>`;
+                  }).join(' ');
+                  if (d.isVacation) return `
+                    <tr style="background:#f8fafc">
+                      <td style="white-space:nowrap">${d.date}</td>
+                      <td>${recCell}</td>
+                      <td colspan="4" style="color:var(--muted);font-style:italic">Dovolenka – nezapočítava sa</td>
+                      <td class="no-print">
+                        <button class="btn btn-ghost btn-sm" title="Pridať záznam na tento deň"
+                          onclick="openRecordAddForDay('${row.employee.id}', '${d.date}')">+</button>
+                      </td>
+                    </tr>`;
+                  return `
+                    <tr>
+                      <td style="white-space:nowrap">${d.date}</td>
+                      <td>${recCell}</td>
+                      <td><strong>${d.workedHours > 0 ? d.workedHours.toFixed(1) + ' h' : '–'}</strong></td>
+                      <td>${d.mealDay
+                          ? '<span class="badge b-green">✓</span>'
+                          : '<span class="badge b-gray">–</span>'}</td>
+                      <td>${d.assemblyHours > 0 ? d.assemblyHours.toFixed(1) + ' h' : '–'}</td>
+                      <td>${d.dayDiet > 0 ? d.dayDiet.toFixed(2) + ' €' : '–'}</td>
+                      <td class="no-print">
+                        <button class="btn btn-ghost btn-sm" title="Pridať záznam na tento deň"
+                          onclick="openRecordAddForDay('${row.employee.id}', '${d.date}')">+</button>
+                      </td>
+                    </tr>`;
+                }).join('')}
               </tbody>
             </table>
           </div>
@@ -460,8 +475,14 @@ async function loadReport() {
 
 function renderPrintSheet(row, monthName, year, settings) {
   const activeDays = row.dailyDetails.filter(d =>
-    d.workedHours > 0 || d.dayDiet > 0 || d.mealDay);
+    d.isVacation || d.workedHours > 0 || d.dayDiet > 0 || d.mealDay);
   const dailyRows = activeDays.map(d => {
+    if (d.isVacation) {
+      return `<tr>
+        <td>${d.date}</td>
+        <td colspan="5" style="text-align:center;font-style:italic">Dovolenka</td>
+      </tr>`;
+    }
     const mealAmt  = d.mealDay ? settings.mealContribution : 0;
     const dayTotal = mealAmt + d.dayDiet;
     return `<tr>

@@ -178,18 +178,28 @@ function synthesizeAutoCloses(records) {
     byDate.get(k).push(r);
   }
 
+  // A day is on vacation if any record explicitly marks it as dovolenka.
+  // Vacation days: don't trigger auto-close, aren't counted in the workday
+  // gap, and are pinned to 0 in the daily report loop.
+  const isVacationDay = (dayKey) =>
+    (byDate.get(dayKey) || []).some(r => r.action === 'dovolenka');
+
   const synthetic = [];
   for (const [date, dayEvents] of byDate.entries()) {
+    if (isVacationDay(date)) continue;
     const hasMorningPrichod = dayEvents.some(r =>
       r.action === 'prichod' && bratislavaHour(r.timestamp) < 12);
     const hasClose = dayEvents.some(r =>
       r.action === 'odchod' || r.action === 'odchod_montaz');
     if (!hasMorningPrichod || hasClose) continue;
 
-    // Find next relevant day: skip weekend days that have no events at all.
+    // Find next relevant day: skip weekend days that have no events at all,
+    // and skip vacation days (they're not "person is missing from work" signals).
     let nextKey = nextLocalDayKey(date);
     let guard   = 14;
-    while (nextKey && isWeekendKey(nextKey) && !byDate.has(nextKey) && guard-- > 0) {
+    while (nextKey && guard-- > 0) {
+      const emptyWeekend = isWeekendKey(nextKey) && !byDate.has(nextKey);
+      if (!emptyWeekend && !isVacationDay(nextKey)) break;
       nextKey = nextLocalDayKey(nextKey);
     }
     // Are there ANY future events? If not, default to plain odchod (person
@@ -228,13 +238,15 @@ function synthesizeAutoCloses(records) {
   for (let i = 0; i < merged.length - 1; i++) {
     const a = merged[i], b = merged[i + 1];
     if (a.action === 'odchod_montaz') continue; // trip already open
+    if (a.action === 'dovolenka' || b.action === 'dovolenka') continue;
     const dayA = localDateKey(a.timestamp);
     const dayB = localDateKey(b.timestamp);
     if (dayA === dayB) continue;
-    // Count workdays strictly between dayA and dayB.
+    // Count workdays strictly between dayA and dayB — vacation days don't
+    // count as "person was absent from work → maybe on trip".
     let gapWd = 0, key = nextLocalDayKey(dayA), guard = 120;
     while (key && key !== dayB && guard-- > 0) {
-      if (!isWeekendKey(key)) gapWd++;
+      if (!isWeekendKey(key) && !isVacationDay(key)) gapWd++;
       key = nextLocalDayKey(key);
     }
     if (gapWd < 1) continue;
@@ -301,7 +313,7 @@ app.delete('/api/employees/:id', authMW, (req, res) => {
 });
 
 // ─── Records ─────────────────────────────────────────────────────────────────
-const VALID_ACTIONS = ['prichod', 'odchod', 'odchod_montaz', 'navrat_montaz'];
+const VALID_ACTIONS = ['prichod', 'odchod', 'odchod_montaz', 'navrat_montaz', 'dovolenka'];
 
 // Public POST — scan page records without login
 app.post('/api/records', (req, res) => {
@@ -455,6 +467,8 @@ app.get('/api/monthly-report', authMW, (req, res) => {
     // (employee forgot to log it), the next event — typically odchod, or
     // prichod the next day — closes the interval implicitly: being back at
     // HQ to clock out/in implies they returned from assembly.
+    // Dovolenka records are skipped entirely so they don't accidentally close
+    // an open trip or start a new one.
     const assemblyMsByDay = {};
     // Any calendar day touched by an assembly interval that crosses midnight
     // (multi-day trip). Every such day gets full diet regardless of hours
@@ -462,6 +476,7 @@ app.get('/api/monthly-report', authMW, (req, res) => {
     const multiDayTripDays = new Set();
     let pendingDepart = null;
     for (const r of empAll) {
+      if (r.action === 'dovolenka') continue;
       if (r.action === 'odchod_montaz') {
         if (pendingDepart === null) pendingDepart = new Date(r.timestamp).getTime();
         // already on assembly → treat duplicate odchod_montaz as no-op
@@ -500,6 +515,27 @@ app.get('/api/monthly-report', authMW, (req, res) => {
 
     Object.keys(byDate).sort().forEach(date => {
       const day = byDate[date].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      // Vacation day: zeroes everything and short-circuits diet / meal logic.
+      const isVacation = day.some(r => r.action === 'dovolenka');
+      if (isVacation) {
+        dailyDetails.push({
+          date,
+          records:       day.map(r => ({
+            id:        r.id,
+            action:    r.action,
+            time:      localTime(r.timestamp),
+            timestamp: r.timestamp,
+            auto:      r.auto || false,
+          })),
+          isVacation:    true,
+          mealDay:       false,
+          assemblyHours: 0,
+          workedHours:   0,
+          dayDiet:       0,
+        });
+        return;
+      }
 
       const assemblyMs    = assemblyMsByDay[date] || 0;
       const assemblyHours = assemblyMs / 3_600_000;
