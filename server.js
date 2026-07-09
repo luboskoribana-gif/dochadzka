@@ -506,9 +506,12 @@ app.get('/api/monthly-report', authMW, (req, res) => {
       const isMultiDay    = multiDayTripDays.has(date);
       totalDietHours += assemblyHours;
 
+      // Diet is always tiered by the actual assembly hours logged for that
+      // calendar day — even on multi-day trip days. Departure/return days
+      // that only span part of the day get the partial rate; middle days
+      // that cover a full 24 h naturally fall into the 18+ h tier.
       let dayDiet = 0;
-      if      (isMultiDay)          dayDiet = cfg.dietRate18plus;
-      else if (assemblyHours >= 18) dayDiet = cfg.dietRate18plus;
+      if      (assemblyHours >= 18) dayDiet = cfg.dietRate18plus;
       else if (assemblyHours >= 12) dayDiet = cfg.dietRate12to18;
       else if (assemblyHours >= 5)  dayDiet = cfg.dietRate5to12;
 
