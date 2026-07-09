@@ -91,7 +91,7 @@
           <select id="r-month"></select>
           <select id="r-year"></select>
           <button class="btn btn-primary" onclick="loadReport()">Zobraziť</button>
-          <button class="btn btn-ghost"   onclick="window.print()">🖨 Tlač</button>
+          <button class="btn btn-ghost"   onclick="printAllSheets()">🖨 Tlač vyúčtovaní</button>
         </div>
       </div>
       <div id="report-out"></div>
@@ -139,6 +139,9 @@
 
   </div><!-- /container -->
 </div><!-- /admin-wrap -->
+
+<!-- Compact vyúčtovanie print sheets (hidden until print) -->
+<div id="print-sheets"></div>
 
 <!-- Modal pre úpravu / pridanie záznamu -->
 <div id="rec-modal" class="modal hidden" onclick="if(event.target===this)closeRecordModal()">

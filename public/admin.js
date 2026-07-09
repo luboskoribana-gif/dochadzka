@@ -399,7 +399,7 @@ async function loadReport() {
       <div class="report-block report-emp" data-emp-id="${row.employee.id}">
         <div class="report-emp-head">
           <h3>${esc(row.employee.name)} <span style="color:var(--muted);font-weight:400;font-size:.85rem">– ${monthName} ${data.year}</span></h3>
-          <button class="btn btn-ghost no-print" onclick="printEmployee('${row.employee.id}')">🖨 Tlač zamestnanca</button>
+          <button class="btn btn-ghost no-print" onclick="printEmployeeSheet('${row.employee.id}')">🖨 Tlač vyúčtovanie</button>
         </div>
         <div class="stats-row">
           <div class="stat"><div class="val">${row.totalWorkedHours.toFixed(1)} h</div><div class="lbl">Odpracované</div></div>
@@ -452,6 +452,91 @@ async function loadReport() {
         </div>
       </div>`).join('')}
   `;
+
+  // Populate hidden compact print sheets (one page per employee).
+  document.getElementById('print-sheets').innerHTML =
+    report.map(row => renderPrintSheet(row, monthName, data.year, s)).join('');
+}
+
+function renderPrintSheet(row, monthName, year, settings) {
+  const activeDays = row.dailyDetails.filter(d =>
+    d.workedHours > 0 || d.dayDiet > 0 || d.mealDay);
+  const dailyRows = activeDays.map(d => {
+    const mealAmt  = d.mealDay ? settings.mealContribution : 0;
+    const dayTotal = mealAmt + d.dayDiet;
+    return `<tr>
+      <td>${d.date}</td>
+      <td class="num">${d.workedHours > 0   ? d.workedHours.toFixed(1)   : '–'}</td>
+      <td class="num">${d.assemblyHours > 0 ? d.assemblyHours.toFixed(1) : '–'}</td>
+      <td class="num">${mealAmt  > 0 ? mealAmt.toFixed(2)  : '–'}</td>
+      <td class="num">${d.dayDiet > 0 ? d.dayDiet.toFixed(2) : '–'}</td>
+      <td class="num strong">${dayTotal > 0 ? dayTotal.toFixed(2) : '–'}</td>
+    </tr>`;
+  }).join('');
+  const total = row.totalMealContribution + row.totalDiet;
+
+  return `
+    <div class="print-sheet" data-emp-id="${row.employee.id}">
+      <div class="ps-head">
+        <h2>Vyúčtovanie za mesiac ${monthName} ${year}</h2>
+        <div class="ps-emp">Zamestnanec: <strong>${esc(row.employee.name)}</strong></div>
+      </div>
+
+      <table class="ps-summary">
+        <tr>
+          <td>Odpracované hodiny</td><td class="num">${row.totalWorkedHours.toFixed(1)} h</td>
+          <td>Dni so stravným</td><td class="num">${row.totalMealDays}</td>
+        </tr>
+        <tr>
+          <td>Hodiny na montáži</td><td class="num">${row.totalDietHours.toFixed(1)} h</td>
+          <td>Príspevok na stravu</td><td class="num">${row.totalMealContribution.toFixed(2)} €</td>
+        </tr>
+        <tr>
+          <td></td><td></td>
+          <td>Diéty</td><td class="num">${row.totalDiet.toFixed(2)} €</td>
+        </tr>
+        <tr class="ps-total">
+          <td colspan="3"><strong>SPOLU (mimo mzdy)</strong></td>
+          <td class="num strong">${total.toFixed(2)} €</td>
+        </tr>
+      </table>
+
+      <h3>Denný prehľad</h3>
+      <table class="ps-daily">
+        <thead>
+          <tr>
+            <th>Dátum</th><th>Prac. h</th><th>Mont. h</th>
+            <th>Strava €</th><th>Diéta €</th><th>Spolu €</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dailyRows}
+          <tr class="ps-total">
+            <td><strong>SPOLU</strong></td>
+            <td class="num strong">${row.totalWorkedHours.toFixed(1)}</td>
+            <td class="num strong">${row.totalDietHours.toFixed(1)}</td>
+            <td class="num strong">${row.totalMealContribution.toFixed(2)}</td>
+            <td class="num strong">${row.totalDiet.toFixed(2)}</td>
+            <td class="num strong">${total.toFixed(2)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="ps-sig">
+        <div class="ps-sig-date">V ______________________ dňa ______________________</div>
+        <div class="ps-sig-row">
+          <div class="ps-sig-block">
+            <div class="ps-sig-underline"></div>
+            <div class="ps-sig-label">Zamestnanec – ${esc(row.employee.name)}</div>
+          </div>
+          <div class="ps-sig-block">
+            <div class="ps-sig-underline"></div>
+            <div class="ps-sig-label">Zamestnávateľ</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 let reportContext = null;
@@ -469,23 +554,27 @@ function openRecordAddForDay(employeeId, dateLabel) {
   openRecordAdd({ employeeId, timestamp: dateLabelToLocalInput(dateLabel) });
 }
 
-function printEmployee(empId) {
-  const block = document.querySelector(`.report-emp[data-emp-id="${empId}"]`);
-  if (!block) return;
-  // Expand the day detail before printing so it shows on paper.
-  const detail = block.querySelector('.day-detail');
-  const wasHidden = detail.classList.contains('hidden');
-  if (wasHidden) detail.classList.remove('hidden');
-
-  block.classList.add('print-target');
-  document.body.classList.add('print-emp-only');
+function printEmployeeSheet(empId) {
+  const sheets = document.querySelectorAll('.print-sheet');
+  sheets.forEach(s => s.classList.toggle('will-print', s.dataset.empId === empId));
+  document.body.classList.add('compact-printing');
   window.print();
-  // Restore state shortly after print dialog closes.
   setTimeout(() => {
-    document.body.classList.remove('print-emp-only');
-    block.classList.remove('print-target');
-    if (wasHidden) detail.classList.add('hidden');
-  }, 200);
+    document.body.classList.remove('compact-printing');
+    sheets.forEach(s => s.classList.remove('will-print'));
+  }, 300);
+}
+
+function printAllSheets() {
+  const sheets = document.querySelectorAll('.print-sheet');
+  if (sheets.length === 0) return alert('Najprv zobraz výkaz.');
+  sheets.forEach(s => s.classList.add('will-print'));
+  document.body.classList.add('compact-printing');
+  window.print();
+  setTimeout(() => {
+    document.body.classList.remove('compact-printing');
+    sheets.forEach(s => s.classList.remove('will-print'));
+  }, 300);
 }
 
 function toggleDetail(btn) {

@@ -308,10 +308,46 @@ tbody tr:hover td { background: #fafbff; }
   .modal { display: none !important; }
 }
 
-/* When printing a single employee, hide everything else in the report */
+/* ── Compact print sheet (accounting statement) ──────── */
+#print-sheets { display: none; }
+
 @media print {
-  body.print-emp-only .report-block:not(.print-target) { display: none !important; }
-  body.print-emp-only .report-meta                     { display: none !important; }
+  body.compact-printing #login-wrap,
+  body.compact-printing #admin-wrap,
+  body.compact-printing #rec-modal { display: none !important; }
+  body.compact-printing #print-sheets  { display: block; }
+  body.compact-printing .print-sheet   { display: none; }
+  body.compact-printing .print-sheet.will-print { display: block; }
+  body.compact-printing .print-sheet.will-print + .print-sheet.will-print {
+    page-break-before: always;
+  }
+
+  .print-sheet {
+    color: #000; font-family: Arial, sans-serif; font-size: 10pt;
+    padding: 12mm 14mm; line-height: 1.35;
+  }
+  .print-sheet .ps-head { border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 12px; }
+  .print-sheet .ps-head h2 { font-size: 14pt; margin: 0 0 4px 0; }
+  .print-sheet .ps-emp { font-size: 11pt; }
+  .print-sheet h3 { font-size: 11pt; margin: 14px 0 6px 0; }
+  .print-sheet table { width: 100%; border-collapse: collapse; }
+  .print-sheet .ps-summary td, .print-sheet .ps-daily th, .print-sheet .ps-daily td {
+    border: 1px solid #444; padding: 3px 6px;
+  }
+  .print-sheet .ps-summary { margin-bottom: 4px; }
+  .print-sheet .ps-summary td:nth-child(1), .print-sheet .ps-summary td:nth-child(3) { width: 25%; }
+  .print-sheet .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .print-sheet .strong { font-weight: 700; }
+  .print-sheet .ps-total { background: #eee; }
+  .print-sheet .ps-daily thead th { background: #eee; text-align: center; }
+  .print-sheet .ps-daily td:first-child { white-space: nowrap; }
+
+  .print-sheet .ps-sig { margin-top: 18mm; page-break-inside: avoid; }
+  .print-sheet .ps-sig-date { margin-bottom: 14mm; }
+  .print-sheet .ps-sig-row { display: flex; gap: 20mm; }
+  .print-sheet .ps-sig-block { flex: 1; }
+  .print-sheet .ps-sig-underline { border-bottom: 1px solid #000; height: 34px; margin-bottom: 3px; }
+  .print-sheet .ps-sig-label { font-size: 9pt; }
 }
 
 /* ── Mobile ──────────────────────────────────────────── */
